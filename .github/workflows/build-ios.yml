@@ -1,0 +1,82 @@
+
+name: Build ESP32 Agent iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Build unsigned IPA
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Prepare local configuration
+        run: |
+          cp ios/Config/Local.xcconfig.example \
+             ios/Config/Local.xcconfig
+
+          echo "DEVELOPMENT_TEAM =" \
+            >> ios/Config/Local.xcconfig
+
+      - name: Generate Xcode project
+        run: |
+          cd ios
+          xcodegen generate
+
+      - name: Build iPhone application
+        run: |
+          set -o pipefail
+
+          xcodebuild \
+            -project ios/IPhoneAgent.xcodeproj \
+            -scheme IPhoneAgent \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$GITHUB_WORKSPACE/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          set -e
+
+          PRODUCTS="build/Build/Products/Release-iphoneos"
+          APP="$PRODUCTS/IPhoneAgent.app"
+
+          if [ ! -d "$APP" ]; then
+            echo "Expected app not found. Available apps:"
+            find "$PRODUCTS" -maxdepth 1 \
+              -name '*.app' -print
+            exit 1
+          fi
+
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+
+          zip -qry ESP32Agent-unsigned.ipa Payload
+
+          echo "IPA created:"
+          ls -lh ESP32Agent-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ESP32Agent-unsigned-IPA
+          path: ESP32Agent-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
